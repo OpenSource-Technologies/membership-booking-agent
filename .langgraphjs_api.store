@@ -1,0 +1,219 @@
+{
+  "json": {
+    "data": [
+      [
+        "booking:user_demo_test",
+        [
+          [
+            "progress",
+            {
+              "value": {
+                "completedSteps": [
+                  "getLocations",
+                  "selectLocation",
+                  "createCart",
+                  "getMembershipPlans",
+                  "selectPlan",
+                  "addMembershipToCart",
+                  "applyPromotionCode",
+                  "collectClientInfo_processing",
+                  "collectClientInfo",
+                  "setClientOnCart",
+                  "addCardPaymentMethod",
+                  "checkoutCart"
+                ],
+                "data": {
+                  "selectedLocationId": "urn:blvd:Location:9d7353d1-d903-4e6b-8072-1f6c938e7e9b",
+                  "selectedLocationName": "First Sandbox Location",
+                  "cartId": "urn:blvd:Cart:b3c2333e-45e1-4f0a-9d27-8da037b0c9c9",
+                  "selectedPlanId": "urn:blvd:MembershipPlan:e3a5eb13-7c3b-45bb-9d24-e76895274b25",
+                  "selectedPlanName": "Membership For Spa",
+                  "promoSkipped": true,
+                  "clientInfo": {
+                    "email": "sss@gm.com",
+                    "phoneNumber": "7987898989",
+                    "firstName": "aaa",
+                    "lastName": "sss"
+                  },
+                  "paymentUrl": "http://localhost:4200/checkout/?email=sss%40gm.com&amount=1000&userId=user_demo_test&threadId=c506b390-d2c9-4d59-8577-1d0e8120bd52",
+                  "checkoutComplete": true,
+                  "checkoutResult": {
+                    "checkoutCart": {
+                      "appointments": [],
+                      "cart": {
+                        "clientInformation": {
+                          "__typename": "CartClientInformation",
+                          "email": "sss@gm.com",
+                          "externalId": null,
+                          "firstName": "aaa",
+                          "lastName": "sss",
+                          "phoneNumber": "+17987898989"
+                        },
+                        "completedAt": "2026-02-02T12:20:39.864045Z",
+                        "id": "urn:blvd:Cart:b3c2333e-45e1-4f0a-9d27-8da037b0c9c9",
+                        "location": {
+                          "id": "urn:blvd:Location:9d7353d1-d903-4e6b-8072-1f6c938e7e9b",
+                          "name": "First Sandbox Location",
+                          "tz": "America/Los_Angeles"
+                        },
+                        "selectedItems": [
+                          {
+                            "__typename": "CartPurchasableItem",
+                            "id": "urn:blvd:ProductLocation:72fd1003-8e0c-4dd2-8ade-658ad9773f31",
+                            "item": {
+                              "__typename": "CartAvailablePurchasableItem",
+                              "id": "urn:blvd:ProductLocation:b48543bf-d89a-4176-a116-235feebcbe7e",
+                              "name": "Membership For Spa"
+                            },
+                            "price": 1000
+                          }
+                        ],
+                        "summary": {
+                          "__typename": "CartSummary",
+                          "deposit": "NO_DEPOSIT",
+                          "depositAmount": 0,
+                          "discountAmount": 0,
+                          "gratuityAmount": 0,
+                          "paymentMethodRequired": true,
+                          "roundingAmount": 0,
+                          "subtotal": 1000,
+                          "taxAmount": 0,
+                          "total": 1000
+                        }
+                      }
+                    }
+                  }
+                },
+                "messages": [
+                  {
+                    "type": "Object",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "hi"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "AIMessage",
+                    "content": "Here are our available locations:\n\n1. First Sandbox Location - Los Angeles\n\nWhich location would you prefer? (Enter number or name)"
+                  },
+                  {
+                    "type": "AIMessage",
+                    "content": "Perfect! You've selected First Sandbox Location."
+                  },
+                  {
+                    "type": "AIMessage",
+                    "content": "Cart created! Loading membership plans..."
+                  },
+                  {
+                    "type": "AIMessage",
+                    "content": "Here are our membership plans:\n\n1. Membership For Massage - 2500\n   Make self-care a habit with our exclusive massage membership. Enjoy monthly rejuvenating sessions, exclusive discounts, and VIP access to wellness perks. Whether you need deep tissue relief, a soothing Swedish massage, or regular stress detox—your body will thank you.\n\n2. Membership For Spa - 1000\n   Join our exclusive salon membership and enjoy premium beauty experiences all year round. From priority booking to irresistible discounts and members-only events—our memberships are designed to pamper, save, and reward.\n\n3. Membership For Hair - 1200\n   A haircut, in the most basic sense, is the act of cutting hair to create a desired shape or style. It can refer to the process itself or the resulting style of the hair. Haircutting involves various techniques like trimming, shaping, and texturizing, often using scissors, clippers, or razors. The goal is to transform the hair into a specific look\n\n4. Membership For Facial - 1000\n   A facial, in skincare, is a beauty treatment that focuses on cleansing, improving, and enhancing the skin on the face. It typically involves a variety of steps like cleansing, exfoliation, massage, and moisturizing, often performed by licensed professionals in beauty salons or spas. \n\n5. Memberhip 1 - Service Free - 7900\n   A membership free service means a service, product, or platform that does not require a payment or subscription to be used. These services are often supported by advertising, freemium models (basic version with a paid upgrade), or donations\n\nWhich plan interests you?"
+                  },
+                  {
+                    "type": "AIMessage",
+                    "content": "Excellent! You've selected Membership For Spa."
+                  },
+                  {
+                    "type": "AIMessage",
+                    "content": "Membership For Spa added to cart!\n\nDo you have a promo code? (yes/no or enter code)"
+                  },
+                  {
+                    "type": "AIMessage",
+                    "content": "No promo code applied.\n\nNow I need some information to complete your booking."
+                  },
+                  {
+                    "type": "AIMessage",
+                    "content": "Please provide your first name, last name, email address, phone number:"
+                  }
+                ],
+                "availableLocations": [
+                  {
+                    "id": "urn:blvd:Location:9d7353d1-d903-4e6b-8072-1f6c938e7e9b",
+                    "name": "First Sandbox Location",
+                    "city": "Los Angeles"
+                  }
+                ],
+                "availablePlans": [
+                  {
+                    "id": "urn:blvd:MembershipPlan:4a668af9-df3e-40c6-b2a9-478287f8299f",
+                    "name": "Membership For Massage",
+                    "description": "Make self-care a habit with our exclusive massage membership. Enjoy monthly rejuvenating sessions, exclusive discounts, and VIP access to wellness perks. Whether you need deep tissue relief, a soothing Swedish massage, or regular stress detox—your body will thank you.",
+                    "price": 2500,
+                    "active": true,
+                    "category": "Memberships"
+                  },
+                  {
+                    "id": "urn:blvd:MembershipPlan:e3a5eb13-7c3b-45bb-9d24-e76895274b25",
+                    "name": "Membership For Spa",
+                    "description": "Join our exclusive salon membership and enjoy premium beauty experiences all year round. From priority booking to irresistible discounts and members-only events—our memberships are designed to pamper, save, and reward.",
+                    "price": 1000,
+                    "active": true,
+                    "category": "Memberships"
+                  },
+                  {
+                    "id": "urn:blvd:MembershipPlan:e76e2353-8c69-4ac7-b67b-36fd7b156d79",
+                    "name": "Membership For Hair",
+                    "description": "A haircut, in the most basic sense, is the act of cutting hair to create a desired shape or style. It can refer to the process itself or the resulting style of the hair. Haircutting involves various techniques like trimming, shaping, and texturizing, often using scissors, clippers, or razors. The goal is to transform the hair into a specific look",
+                    "price": 1200,
+                    "active": true,
+                    "category": "Memberships"
+                  },
+                  {
+                    "id": "urn:blvd:MembershipPlan:075c0762-6197-4f9f-bbdd-6d382b5d8b3f",
+                    "name": "Membership For Facial",
+                    "description": "A facial, in skincare, is a beauty treatment that focuses on cleansing, improving, and enhancing the skin on the face. It typically involves a variety of steps like cleansing, exfoliation, massage, and moisturizing, often performed by licensed professionals in beauty salons or spas. ",
+                    "price": 1000,
+                    "active": true,
+                    "category": "Memberships"
+                  },
+                  {
+                    "id": "urn:blvd:MembershipPlan:223293b4-c9cd-424a-a3f8-b78767aa0c3a",
+                    "name": "Memberhip 1 - Service Free",
+                    "description": "A membership free service means a service, product, or platform that does not require a payment or subscription to be used. These services are often supported by advertising, freemium models (basic version with a paid upgrade), or donations",
+                    "price": 7900,
+                    "active": true,
+                    "category": "Memberships"
+                  }
+                ],
+                "lastUpdated": "2026-02-02T12:20:40.342Z"
+              },
+              "key": "progress",
+              "namespace": [
+                "booking",
+                "user_demo_test"
+              ],
+              "createdAt": "2026-02-02T12:20:40.343Z",
+              "updatedAt": "2026-02-02T12:20:40.343Z"
+            }
+          ]
+        ]
+      ]
+    ],
+    "vectors": []
+  },
+  "meta": {
+    "values": {
+      "data": [
+        "map",
+        {
+          "0.1": [
+            "map",
+            {
+              "0.1.createdAt": [
+                "Date"
+              ],
+              "0.1.updatedAt": [
+                "Date"
+              ]
+            }
+          ]
+        }
+      ],
+      "vectors": [
+        "map"
+      ]
+    },
+    "v": 1
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "dependencies": ["."],
+  "graphs": {
+    "memory_agent": "./src/memory_agent/graph.ts:graph"
+  },
+  "env": ".env",
+  "tracing": {
+    "enabled": true
+  }
+}
