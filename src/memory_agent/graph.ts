@@ -7,6 +7,7 @@ import {
   InMemoryStore,
   MemorySaver,
 } from "@langchain/langgraph";
+import type { HumanInterrupt, HumanResponse } from "@langchain/langgraph/prebuilt";
 import { BaseMessage, AIMessage, HumanMessage } from "@langchain/core/messages";
 import { initChatModel } from "langchain/chat_models/universal";
 import { StateAnnotation } from "./state.js";
@@ -647,6 +648,35 @@ function extractClientInfoFromMessages(messages: BaseMessage[]): {
 // SAVE/LOAD PROGRESS
 // ============================================================================
 
+function getBookingNamespace(config: LangGraphRunnableConfig): string[] {
+  const configurable = ensureConfiguration(config);
+  const userId = configurable.userId || "default";
+  const threadId = config.configurable?.thread_id || "default";
+  return ["booking", userId, threadId];
+}
+
+function getInterruptText(
+  response:
+    | HumanResponse
+    | string
+    | Array<HumanResponse | string>
+    | null
+    | undefined,
+): string {
+  if (!response) return "";
+  const first = Array.isArray(response) ? response[0] : response;
+  if (!first) return "";
+  if (typeof first === "string") return first;
+  if (first.type === "response") {
+    if (typeof first.args === "string") return first.args;
+    if (first.args && typeof first.args === "object") {
+      const args = first.args as Record<string, unknown>;
+      if (typeof args.value === "string") return args.value;
+    }
+  }
+  return "";
+}
+
 async function saveProgress(
   config: LangGraphRunnableConfig,
   step: string,
@@ -665,7 +695,7 @@ async function saveProgress(
 
   let existingProgress: any = { completedSteps: [], data: {}, messages: [] };
   try {
-    const results = await store.search(["booking", configurable.userId], { limit: 1 });
+    const results = await store.search(getBookingNamespace(config), { limit: 1 });
     if (results && results.length > 0) {
       existingProgress = results[0].value;
     }
@@ -701,10 +731,11 @@ async function saveProgress(
     lastUpdated: new Date().toISOString(),
   };
 
-  await store.put(["booking", configurable.userId], "progress", progressData);
+  const namespace = getBookingNamespace(config);
+  await store.put(namespace, "progress", progressData);
   console.log("✅ [saveProgress] Saved:", progressData.completedSteps);
 
-  const verification = await store.get(["booking", configurable.userId], "progress");
+  const verification = await store.get(namespace, "progress");
 console.log("✅ [saveProgress] Verified stored value:", verification);
 
 }
@@ -729,7 +760,7 @@ async function loadSavedProgress(
   console.log("📝 [loadSavedProgress] Extracted userInput:", userInput ? `"${userInput}"` : "(empty)");
 
   try {
-    const results = await store.search(["booking", configurable.userId], { limit: 1 });
+    const results = await store.search(getBookingNamespace(config), { limit: 1 });
 
     if (results && results.length > 0) {
       const progress = results[0].value;
@@ -840,10 +871,22 @@ async function selectLocation(
   let userInput = state.userInput;
 
   if (!userInput) {
-    // console.log("   ⏸️  No input - triggering interrupt...");
-    const response = interrupt("Please select a location:");
-    // console.log("   ▶️  Resumed with:", response);
-    userInput = response;
+    const prompt: HumanInterrupt = {
+      action_request: { action: "select_location", args: {} },
+      config: {
+        allow_respond: true,
+        allow_ignore: false,
+        allow_accept: false,
+        allow_edit: false,
+      },
+      description: "Please select a location:",
+    };
+    const response = interrupt([prompt]) as
+      | Array<HumanResponse | string>
+      | HumanResponse
+      | string
+      | null;
+    userInput = getInterruptText(response);
   }
 
   // console.log(`   📥 Processing: "${userInput}"`);
@@ -970,10 +1013,22 @@ async function selectPlan(
   let userInput = state.userInput;
 
   if (!userInput) {
-    console.log("   ⏸️  No input - triggering interrupt...");
-    const response = interrupt("Please select a plan:");
-    console.log("   ▶️  Resumed with:", response);
-    userInput = response;
+    const prompt: HumanInterrupt = {
+      action_request: { action: "select_plan", args: {} },
+      config: {
+        allow_respond: true,
+        allow_ignore: false,
+        allow_accept: false,
+        allow_edit: false,
+      },
+      description: "Please select a plan:",
+    };
+    const response = interrupt([prompt]) as
+      | Array<HumanResponse | string>
+      | HumanResponse
+      | string
+      | null;
+    userInput = getInterruptText(response);
   }
 
   console.log(`   📥 Processing: "${userInput}"`);
@@ -1106,12 +1161,26 @@ async function promptForClientInfo(
   console.log("📣 Message to user:");
   console.log(message);
   
-  const response = interrupt(message);
+  const prompt: HumanInterrupt = {
+    action_request: { action: "collect_client_info", args: {} },
+    config: {
+      allow_respond: true,
+      allow_ignore: false,
+      allow_accept: false,
+      allow_edit: false,
+    },
+    description: message,
+  };
+  const response = interrupt([prompt]) as
+    | Array<HumanResponse | string>
+    | HumanResponse
+    | string
+    | null;
   console.log("   ▶️  Resumed with:", response);
-  
+
   return {
     messages: [new AIMessage({ content: message })],
-    userInput: response || "",
+    userInput: getInterruptText(response),
   };
 }
 
@@ -1427,7 +1496,7 @@ async function setClientOnCart(
     // Clear for next booking
     const store = getStoreFromConfigOrThrow(config);
     const configurable = ensureConfiguration(config);
-    await store.delete(["booking", configurable.userId], "progress");
+    await store.delete(getBookingNamespace(config), "progress");
 
     return {
       bookingProgress: {
@@ -1505,7 +1574,7 @@ async function checkoutCart(
     // Clear for next booking
     const store = getStoreFromConfigOrThrow(config);
     const configurable = ensureConfiguration(config);
-    await store.delete(["booking", configurable.userId], "progress");
+    await store.delete(getBookingNamespace(config), "progress");
 
     return {
       bookingProgress: {
@@ -1663,8 +1732,12 @@ function routeAfterLoad(state: typeof StateAnnotation.State): string {
 
 
 // Node to check if booking is completed after payment
-async function checkBookingStatus(state: typeof StateAnnotation.State): Promise<Partial<typeof StateAnnotation.State>> {
-  const userId = ensureConfiguration(config).userId;
+async function checkBookingStatus(
+  state: typeof StateAnnotation.State,
+  config: LangGraphRunnableConfig,
+): Promise<Partial<typeof StateAnnotation.State>> {
+  const configurable = ensureConfiguration(config);
+  const userId = configurable.userId;
   
   console.log('🔍 [checkBookingStatus] Checking booking completion status for user:', userId);
   
@@ -1674,7 +1747,9 @@ async function checkBookingStatus(state: typeof StateAnnotation.State): Promise<
 
   try {
     // Search for booking progress
-    const searchResult = await config.store.search(['booking', userId]);
+    const store = getStoreFromConfigOrThrow(config);
+    const threadId = config.configurable?.thread_id || "default";
+    const searchResult = await store.search(["booking", userId, threadId]);
     
     if (searchResult && searchResult.length > 0) {
       const bookingData = searchResult[0].value;
@@ -1830,25 +1905,10 @@ const workflow = new StateGraph(
   .addEdge("checkoutCart", "checkBookingStatus")
   .addEdge("checkBookingStatus", END);
 
-// ✅ Graph is compiled WITHOUT checkpointer here
-// Checkpointer is passed at runtime in index.ts
-
-
-
-const config: any = {
-  configurable: {
-    checkpointer:checkpointer,
-    thread_id: userId,
-    userId: userId,
-    model: "claude-sonnet-4-5-20250929",
-  },
+export const graph = workflow.compile({
+  checkpointer,
   store: memorySTore,
-};
-
-
-
-
-export const graph = workflow.compile(config);
+});
 graph.name = "MembershipBookingAgent";
 
 console.log("[Setup] Graph ready with interrupt pattern!");
@@ -1979,17 +2039,13 @@ app.post('/receive-token', async (req: Request, res: Response) => {
         throw new Error("Failed to load store data: " + (loadError instanceof Error ? loadError.message : String(loadError)));
       }
       
-      // Use the store from config (same one the graph uses)
-      const store = config.store;
-      
-      if (!store) {
-        throw new Error("Store not available in graph config");
-      }
+      // Use the same store instance the graph was compiled with
+      const store = memorySTore;
       
       console.log("[receive-token] Searching for booking progress...");
-      console.log("   - Namespace: ['booking', '" + uuid + "']");
+      console.log("   - Namespace: ['booking', '" + uuid + "', '" + sessionId + "']");
       
-      const results = await store.search(["booking", uuid], { limit: 1 });
+      const results = await store.search(["booking", uuid, sessionId], { limit: 1 });
       
       console.log("[receive-token] Search results:");
       console.log("   - results length:", results?.length);
@@ -2045,7 +2101,7 @@ app.post('/receive-token', async (req: Request, res: Response) => {
         lastUpdated: new Date().toISOString(),
       };
       
-      await store.put(["booking", uuid], "progress", updatedProgress);
+      await store.put(["booking", uuid, sessionId], "progress", updatedProgress);
       console.log("[receive-token] Progress updated");
       
       // ⭐ Save store to file
@@ -2073,7 +2129,7 @@ try {
     {
       configurable: {
         thread_id: sessionId,
-        userId: userId,
+        userId: uuid,
         model: "claude-sonnet-4-5-20250929",
         systemPrompt: SYSTEM_PROMPT,  // ✅ ADD THIS
       },
