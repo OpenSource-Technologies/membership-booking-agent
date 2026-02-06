@@ -66,7 +66,7 @@ async function loadStoreFromFile() {
   
   if (!storePath) {
     console.log("ℹ️  [loadStoreFromFile] No .langgraphjs_api.store file found in any location");
-    console.log("   Checked paths:", possiblePaths);
+    console.log("   Checked paths:", searchPaths);
     return;
   }
   
@@ -673,8 +673,8 @@ function getInterruptText(
   if (first.type === "response") {
     if (typeof first.args === "string") return first.args;
     if (first.args && typeof first.args === "object") {
-      const args = first.args as Record<string, unknown>;
-      if (typeof args.value === "string") return args.value;
+      const maybeValue = (first.args as any)?.value;
+      if (typeof maybeValue === "string") return maybeValue;
     }
   }
   return "";
@@ -690,11 +690,6 @@ async function saveProgress(
   console.log(`🔍 [saveProgress] Data being saved:`, data);
 
   const store = getStoreFromConfigOrThrow(config);
-  const configurable = ensureConfiguration(config);
-
-
-
-
 
   let existingProgress: any = { completedSteps: [], data: {}, messages: [] };
   try {
@@ -752,20 +747,9 @@ async function loadSavedProgress(
   const store = getStoreFromConfigOrThrow(config);
   const configurable = ensureConfiguration(config);
 
-  // ⭐ Extract user input from the latest message
-  let userInput = "";
-  if (state.messages && state.messages.length > 0) {
-    const lastMessage = state.messages[state.messages.length - 1];
-    if (lastMessage && typeof lastMessage.content === 'string') {
-      const content = lastMessage.content.trim();
-   
-
-      if (userInput !== "check_booking_status_internal") {
-        userInput = content;
-      }
-    }
-  }
-  console.log("📝 [loadSavedProgress] Extracted userInput:", userInput ? `"${userInput}"` : "(empty)");
+  // `userInput` should only be set explicitly by the client (e.g., via interrupt resume),
+  // not inferred from chat history. Chat messages already exist in `state.messages`.
+  const userInput = state.userInput?.trim() || "";
 
   try {
     const results = await store.search(getBookingNamespace(config), { limit: 1 });
@@ -861,6 +845,8 @@ async function getLocations(
         completedSteps: [...(state.bookingProgress?.completedSteps || []), "getLocations"],
       },
       messages: [new AIMessage({ content: message })],
+      // Clear any prior chat input so the next step waits for an interrupt response.
+      userInput: "",
     };
   } catch (error) {
     console.error("❌ [getLocations] API Error:", error);
@@ -874,6 +860,7 @@ async function selectLocation(
   config: LangGraphRunnableConfig,
 ): Promise<Partial<typeof StateAnnotation.State>> {
   let userInput = state.userInput;
+  const cameFromInterrupt = !userInput?.trim();
 
   if (!userInput) {
     const prompt: HumanInterrupt = {
@@ -904,7 +891,7 @@ async function selectLocation(
     
     return {
       messages: [
-        new HumanMessage({ content: userInput }), // Send user input to frontend
+        ...(cameFromInterrupt ? [new HumanMessage({ content: userInput })] : []),
         new AIMessage({ content: errorMessage })
       ],
       userInput: "",
@@ -924,7 +911,7 @@ async function selectLocation(
       selectedLocationName: selectedLocation.name,
     },
     messages: [
-      new HumanMessage({ content: userInput }), // Send user input to frontend
+      ...(cameFromInterrupt ? [new HumanMessage({ content: userInput })] : []),
       new AIMessage({ content: `Perfect! You've selected ${selectedLocation.name}.` })
     ],
     userInput: "",
@@ -998,6 +985,8 @@ async function getMembershipPlans(
         completedSteps: [...(state.bookingProgress?.completedSteps || []), "getMembershipPlans"],
       },
       messages: [new AIMessage({ content: message })],
+      // Clear any prior chat input so the next step waits for an interrupt response.
+      userInput: "",
     };
   } catch (error) {
     console.error("❌ [getMembershipPlans] Error:", error);
@@ -1013,6 +1002,7 @@ async function selectPlan(
   console.log("\n🔹 [selectPlan] Processing selection...");
 
   let userInput = state.userInput;
+  const cameFromInterrupt = !userInput?.trim();
 
   if (!userInput) {
     const prompt: HumanInterrupt = {
@@ -1046,7 +1036,7 @@ async function selectPlan(
     
     return {
       messages: [
-        new HumanMessage({ content: userInput }), // Send user input to frontend
+        ...(cameFromInterrupt ? [new HumanMessage({ content: userInput })] : []),
         new AIMessage({ content: errorMessage })
       ],
       userInput: "",
@@ -1070,7 +1060,7 @@ async function selectPlan(
       selectedPlanPrice: selectedPlan.price, 
     },
     messages: [
-      new HumanMessage({ content: userInput }), // Send user input to frontend
+      ...(cameFromInterrupt ? [new HumanMessage({ content: userInput })] : []),
       new AIMessage({ content: `Excellent! You've selected ${selectedPlan.name}.` })
     ],
     userInput: "",
@@ -1119,6 +1109,7 @@ async function applyPromotionCode(
   console.log("\n🎟️  [applyPromotionCode] Processing...");
 
   let userInput = state.userInput?.trim();
+  const cameFromInterrupt = !userInput?.trim();
 
   // Track if we're asking for the code itself (vs initial yes/no)
   const isAskingForCode = state.bookingProgress?.promoCodeState === "asking_for_code";
@@ -1173,8 +1164,8 @@ async function applyPromotionCode(
           promoCodeState: "asking_for_code",
         },
         messages: [
-          new HumanMessage({ content: userInput }), // Send user input to frontend
-          new AIMessage({ content: "Great! Please enter your promo code:" })
+          ...(cameFromInterrupt ? [new HumanMessage({ content: userInput })] : []),
+          new AIMessage({ content: "Great! Please enter your promo code:" }),
         ],
         userInput: "",
       };
@@ -1192,7 +1183,7 @@ async function applyPromotionCode(
           promoCodeState: undefined,
         },
         messages: [
-          new HumanMessage({ content: userInput }), // Send user input to frontend
+          ...(cameFromInterrupt ? [new HumanMessage({ content: userInput })] : []),
           new AIMessage({
             content: "No promo code applied.\n\nNow I need some information to complete your booking. \n\nPlease Enter your First Name ,Last Name, Email and Phone"
           })
@@ -1219,7 +1210,7 @@ async function applyPromotionCode(
           promoCodeState: "asking_for_code",
         },
         messages: [
-          new HumanMessage({ content: userInput }), // Send user input to frontend
+          ...(cameFromInterrupt ? [new HumanMessage({ content: userInput })] : []),
           new AIMessage({ content: "Please enter your promo code:" })
         ],
         userInput: "",
@@ -1238,7 +1229,7 @@ async function applyPromotionCode(
           promoCodeState: undefined,
         },
         messages: [
-          new HumanMessage({ content: userInput }), // Send user input to frontend
+          ...(cameFromInterrupt ? [new HumanMessage({ content: userInput })] : []),
           new AIMessage({
             content: "No promo code applied.\n\nNow I need some information to complete your booking. \n\nPlease Enter your First Name ,Last Name, Email and Phone"
           })
@@ -1266,7 +1257,7 @@ async function applyPromotionCode(
         promoCodeState: undefined,
       },
       messages: [
-        new HumanMessage({ content: userInput }), // Send user input to frontend
+        ...(cameFromInterrupt ? [new HumanMessage({ content: userInput })] : []),
         new AIMessage({
           content: "Couldn't apply the promo code (cart not found). Moving on.\n\nNow I need some information to complete your booking. \n\nPlease Enter your First Name ,Last Name, Email and Phone"
         })
@@ -1301,7 +1292,7 @@ async function applyPromotionCode(
           promoCodeState: undefined,
         },
         messages: [
-          new HumanMessage({ content: userInput }), // Send user input to frontend
+          ...(cameFromInterrupt ? [new HumanMessage({ content: userInput })] : []),
           new AIMessage({
             content: `✅ Promo code "${promoCode}" applied successfully!\n\nNow I need some information to complete your booking. \n\nPlease Enter your First Name ,Last Name, Email and Phone`
           })
@@ -1317,7 +1308,7 @@ async function applyPromotionCode(
           promoCodeState: "retrying_code",
         },
         messages: [
-          new HumanMessage({ content: userInput }), // Send user input to frontend
+          ...(cameFromInterrupt ? [new HumanMessage({ content: userInput })] : []),
           new AIMessage({
             content: `❌ The promo code "${promoCode}" is invalid or expired.\n\nWould you like to try another promo code? (yes/no)`
           })
@@ -1334,7 +1325,7 @@ async function applyPromotionCode(
         promoCodeState: "retrying_code",
       },
       messages: [
-        new HumanMessage({ content: userInput }), // Send user input to frontend
+        ...(cameFromInterrupt ? [new HumanMessage({ content: userInput })] : []),
         new AIMessage({
           content: `❌ There was an issue applying the promo code "${promoCode}".\n\nWould you like to try another promo code? (yes/no)`
         })
@@ -1401,7 +1392,7 @@ async function promptForClientInfo(
   return {
     messages: [
       new AIMessage({ content: message }),
-      new HumanMessage({ content: userInput }), // Send user input to frontend
+      ...(userInput ? [new HumanMessage({ content: userInput })] : []),
     ],
     userInput: userInput,
   };
@@ -1846,7 +1837,7 @@ async function checkoutCart(
 // ============================================================================
 // ROUTING
 // ============================================================================
-async function routeAfterLoad(state: typeof StateAnnotation.State): string {
+function routeAfterLoad(state: typeof StateAnnotation.State): string {
   // console.log("\n🔀 [routeAfterLoad] Routing...");
   
   const completed = state.bookingProgress?.completedSteps || [];
@@ -1854,58 +1845,20 @@ async function routeAfterLoad(state: typeof StateAnnotation.State): string {
   // console.log("   Completed:", completed);
   console.log("   User input:", userInput ? `"${userInput}"` : "(empty)");
 
+  // Internal signal used by token flow to trigger a status check.
+  const lastHumanMessage = [...(state.messages || [])]
+    .reverse()
+    .find((m) => m?.constructor?.name === "HumanMessage");
+  const lastHumanContent = lastHumanMessage?.content?.toString().trim() || "";
+  if (lastHumanContent === "check_booking_status_internal") {
+    console.log("   → checkBookingStatus (internal status check)");
+    return "checkBookingStatus";
+  }
+
   // ⭐ NEW: If bookingProgress is undefined or empty, start fresh
   if (!state.bookingProgress || completed.length === 0) {
     console.log("   → getLocations (fresh start - no progress found)");
     return "getLocations";
-  }
-
-  // // ⭐ NEW: Check if this is an internal booking status check
-  // if (userInput === "check_booking_status_internal") {
-  //   console.log("   → checkBookingStatus (internal status check)");
-  //   return "checkBookingStatus";
-  // }
-
-    // ⭐ NEW: Check if this is an internal booking status check
-  // Check the last message content (could be AIMessage or HumanMessage)
-  // const lastMessage = state.messages[state.messages.length - 1];
-  // const lastMessageContent = lastMessage?.content?.toString().trim() || "";
-  
-  // if (lastMessageContent === "check_booking_status_internal") {
-  //   console.log("   → checkBookingStatus (internal status check)");
-  //   return "checkBookingStatus";
-  // }
-
-
-  const store = getStoreFromConfigOrThrow(config);
-  const configurable = ensureConfiguration(config);
-  const threadId = config.configurable?.thread_id || 'default';
-  
-  console.log("🔍 [routerAfterReload] Checking booking status from store...");
-  
-  try {
-    const results = await store.search(["booking", configurable.userId, threadId], { limit: 1 });
-    
-    console.log("   - Search results length:", results?.length || 0);
-    
-    if (results && results.length > 0) {
-      const progress = results[0].value;
-      
-      console.log("     • completedSteps:", progress.completedSteps);
-      console.log("     • checkoutComplete:", progress.data?.checkoutComplete);
-      
-      // Check if checkout is complete
-      if (progress.data?.checkoutComplete === true) {
-        console.log("   ✅ Checkout is complete, sending success message");
-        return "checkBookingStatus";
-      } else {
-        console.log("     • checkoutComplete value:", progress.data?.checkoutComplete);
-      }
-    } else {
-      console.log("   ⚠️ No progress data found in store");
-    }
-  } catch (error) {
-    console.error("   ❌ Error checking booking status from store:");
   }
 
   // New payment flow
@@ -2122,7 +2075,11 @@ async function checkBookingStatus(
 
 
 // Node to cleanup state after successful booking
-async function cleanupState(state: typeof StateAnnotation.State): Promise<Partial<typeof StateAnnotation.State>> {
+async function cleanupState(
+  state: typeof StateAnnotation.State,
+  config: LangGraphRunnableConfig,
+): Promise<Partial<typeof StateAnnotation.State>> {
+  const store = getStoreFromConfigOrThrow(config);
   const userId = ensureConfiguration(config).userId;
   
   console.log('🧹 [cleanupState] Cleaning up booking state for user:', userId);
@@ -2134,8 +2091,8 @@ async function cleanupState(state: typeof StateAnnotation.State): Promise<Partia
   try {
     // Delete the booking progress from the store
     // ⭐ FIX: Include threadId in namespace for thread isolation
-    const threadId = config.configurable?.thread_id || 'default';
-    await config.store.delete(["booking", userId, threadId], "progress");
+    const threadId = config.configurable?.thread_id || "default";
+    await store.delete(["booking", userId, threadId], "progress");
     console.log('✅ [cleanupState] Booking state cleared successfully');
     
     // Also save the updated store to file
@@ -2276,25 +2233,10 @@ const workflow = new StateGraph(
   // .addEdge("checkoutCart", "checkBookingStatus")
   .addEdge("checkBookingStatus", END);
 
-// ✅ Graph is compiled WITHOUT checkpointer here
-// Checkpointer is passed at runtime in index.ts
-
-
-
-const config: any = {
-  configurable: {
-    checkpointer:checkpointer,
-    // thread_id: userId,
-    // userId: userId,
-    model: "claude-sonnet-4-5-20250929",
-  },
+export const graph = workflow.compile({
+  checkpointer,
   store: memorySTore,
-};
-
-
-
-
-export const graph = workflow.compile(config);
+});
 graph.name = "MembershipBookingAgent";
 
 console.log("[Setup] Graph ready with interrupt pattern!");
@@ -2381,12 +2323,7 @@ app.post('/receive-token', async (req: Request, res: Response) => {
     console.log("🔍 [receive-token] Extracted values:");
     console.log("   - userId:", uuid);
     console.log("   - threadId:", sessionId);
-
-    config.configurable.thread_id = sessionId;
-
-    const threadId = config.configurable?.thread_id || 'default';
-    
-    console.log('     • thread_id5555:', threadId);
+    const threadId = sessionId || "default";
     
 
     
@@ -2459,15 +2396,6 @@ app.post('/receive-token', async (req: Request, res: Response) => {
       if (!clientInfo?.firstName || !clientInfo?.lastName || !clientInfo?.email || !clientInfo?.phoneNumber) {
         throw new Error("Incomplete client information");
       }
-      
-
-
-      const configurable = ensureConfiguration(config);
-      const userId = configurable.userId;
-      const threadId = config.configurable?.thread_id || 'default';
-      
-      console.log('     • thread_i6666:', threadId);
-    
 
       
       // Step 1: Set client info on cart
@@ -2525,16 +2453,9 @@ try {
   console.log('     • thread_id:', sessionId);
   console.log('     • userId:', uuid);
 
-  const configurable = ensureConfiguration(config);
-    const userId = configurable.userId;
-    const threadId = config.configurable?.thread_id || 'default';
-    
-    console.log('     • thread_id333:', threadId);
-  
-
   const graphResponse = await graph.invoke(
     {
-      messages: [],  // ✅ Empty messages array instead of null
+      messages: [new HumanMessage({ content: "check_booking_status_internal" })],
     },
     {
       configurable: {
