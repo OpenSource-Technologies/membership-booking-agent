@@ -507,7 +507,10 @@ async function blvdApplyPromoCode(cartId: string, offerCode: string) {
       offerCode: offerCode,
     }
   });
-  return data?.addCartOffer?.offer?.applied || false;
+  const applied = data?.addCartOffer?.offer?.applied || false;
+  const total = data?.addCartOffer?.cart?.summary?.total;           // post-discount total (cents)
+  const discountAmount = data?.addCartOffer?.cart?.summary?.discountAmount; // discount (cents)
+  return { applied, total, discountAmount };
 }
 
 async function blvdSetClientOnCart(cartId: string, clientInfo: any) {
@@ -754,7 +757,12 @@ async function loadSavedProgress(
   if (state.messages && state.messages.length > 0) {
     const lastMessage = state.messages[state.messages.length - 1];
     if (lastMessage && typeof lastMessage.content === 'string') {
-      userInput = lastMessage.content.trim();
+      const content = lastMessage.content.trim();
+   
+
+      if (userInput !== "check_booking_status_internal") {
+        userInput = content;
+      }
     }
   }
   console.log("📝 [loadSavedProgress] Extracted userInput:", userInput ? `"${userInput}"` : "(empty)");
@@ -861,13 +869,10 @@ async function getLocations(
     };
   }
 }
-
 async function selectLocation(
   state: typeof StateAnnotation.State,
   config: LangGraphRunnableConfig,
 ): Promise<Partial<typeof StateAnnotation.State>> {
-  // console.log("\n🔹 [selectLocation] Processing selection...");
-
   let userInput = state.userInput;
 
   if (!userInput) {
@@ -889,26 +894,22 @@ async function selectLocation(
     userInput = getInterruptText(response);
   }
 
-  // console.log(`   📥 Processing: "${userInput}"`);
-
   const selectedLocation = extractLocationFromMessage(
     new HumanMessage({ content: userInput }),
     state.availableLocations || []
   );
 
   if (!selectedLocation) {
-    console.log("   ❌ Invalid selection - asking again...");
     const errorMessage = `❌ Invalid selection "${userInput}". Please choose by number or name:`;
     
-    // Return state update with error message, then interrupt
-    // The interrupt will be handled on next iteration
     return {
-      messages: [...state.messages, new AIMessage({ content: errorMessage })],
-      userInput: "", // This will trigger interrupt on next call
+      messages: [
+        new HumanMessage({ content: userInput }), // Send user input to frontend
+        new AIMessage({ content: errorMessage })
+      ],
+      userInput: "",
     };
   }
-
-  // console.log("   ✅ Selected:", selectedLocation.name);
 
   await saveProgress(config, "selectLocation", {
     selectedLocationId: selectedLocation.id,
@@ -922,11 +923,13 @@ async function selectLocation(
       selectedLocationId: selectedLocation.id,
       selectedLocationName: selectedLocation.name,
     },
-    messages: [new AIMessage({ content: `Perfect! You've selected ${selectedLocation.name}.` })],
+    messages: [
+      new HumanMessage({ content: userInput }), // Send user input to frontend
+      new AIMessage({ content: `Perfect! You've selected ${selectedLocation.name}.` })
+    ],
     userInput: "",
   };
 }
-
 async function createCart(
   state: typeof StateAnnotation.State,
   config: LangGraphRunnableConfig,
@@ -1003,7 +1006,6 @@ async function getMembershipPlans(
     };
   }
 }
-
 async function selectPlan(
   state: typeof StateAnnotation.State,
   config: LangGraphRunnableConfig,
@@ -1042,10 +1044,12 @@ async function selectPlan(
     console.log("   ❌ Invalid selection - asking again...");
     const errorMessage = `❌ Invalid selection "${userInput}". Please choose by number or name:`;
     
-    // Return state update with error message, then interrupt
     return {
-      messages: [...state.messages, new AIMessage({ content: errorMessage })],
-      userInput: "", // This will trigger interrupt on next call
+      messages: [
+        new HumanMessage({ content: userInput }), // Send user input to frontend
+        new AIMessage({ content: errorMessage })
+      ],
+      userInput: "",
     };
   }
 
@@ -1054,6 +1058,7 @@ async function selectPlan(
   await saveProgress(config, "selectPlan", {
     selectedPlanId: selectedPlan.id,
     selectedPlanName: selectedPlan.name,
+    selectedPlanPrice: selectedPlan.price, 
   }, state);
 
   return {
@@ -1062,8 +1067,12 @@ async function selectPlan(
       completedSteps: [...(state.bookingProgress?.completedSteps || []), "selectPlan"],
       selectedPlanId: selectedPlan.id,
       selectedPlanName: selectedPlan.name,
+      selectedPlanPrice: selectedPlan.price, 
     },
-    messages: [new AIMessage({ content: `Excellent! You've selected ${selectedPlan.name}.` })],
+    messages: [
+      new HumanMessage({ content: userInput }), // Send user input to frontend
+      new AIMessage({ content: `Excellent! You've selected ${selectedPlan.name}.` })
+    ],
     userInput: "",
   };
 }
@@ -1102,29 +1111,238 @@ async function addMembershipToCart(
   }
 }
 
+
 async function applyPromotionCode(
   state: typeof StateAnnotation.State,
   config: LangGraphRunnableConfig,
 ): Promise<Partial<typeof StateAnnotation.State>> {
   console.log("\n🎟️  [applyPromotionCode] Processing...");
 
-  // 🔧 AUTO-SKIP PROMO FOR TESTING
-  console.log("   🔧 Auto-skipping promo code for testing");
-  await saveProgress(config, "applyPromotionCode", { promoSkipped: true }, state);
+  let userInput = state.userInput?.trim();
 
-  return {
-    bookingProgress: {
-      ...state.bookingProgress,
-      completedSteps: [...(state.bookingProgress?.completedSteps || []), "applyPromotionCode"],
-      promoSkipped: true,
-    },
-    messages: [new AIMessage({
-      content: "No promo code applied.\n\nNow I need some information to complete your booking."
-    })],
-    userInput: "",
-  };
+  // Track if we're asking for the code itself (vs initial yes/no)
+  const isAskingForCode = state.bookingProgress?.promoCodeState === "asking_for_code";
+  const isRetryingCode = state.bookingProgress?.promoCodeState === "retrying_code";
+
+  if (!userInput) {
+    console.log("   ⏸️  No input yet - triggering interrupt...");
+    let promptMessage: string;
+    
+    if (isRetryingCode) {
+      promptMessage = "Would you like to try another promo code? (yes/no)";
+    } else if (isAskingForCode) {
+      promptMessage = "Please enter your promo code:";
+    } else {
+      promptMessage = "Do you have a promo code? (yes/no)";
+    }
+    
+    const prompt: HumanInterrupt = {
+      action_request: { action: "promo_code_input", args: {} },
+      config: {
+        allow_respond: true,
+        allow_ignore: false,
+        allow_accept: false,
+        allow_edit: false,
+      },
+      description: promptMessage,
+    };
+    
+    const response = interrupt([prompt]) as
+      | Array<HumanResponse | string>
+      | HumanResponse
+      | string
+      | null;
+    
+    console.log("   ▶️  Resumed with:", response);
+    userInput = getInterruptText(response);
+  }
+
+  console.log(`   📥 Processing promo input: "${userInput}"`);
+  const lower = (userInput || "").toLowerCase();
+
+  // ============================================================
+  // SCENARIO 1: Initial question - user says "yes" or "no"
+  // ============================================================
+  if (!isAskingForCode && !isRetryingCode) {
+    if (lower === "yes" || lower === "y") {
+      console.log("   ✅ User wants to enter a promo code - asking for it now...");
+      
+      return {
+        bookingProgress: {
+          ...state.bookingProgress,
+          promoCodeState: "asking_for_code",
+        },
+        messages: [
+          new HumanMessage({ content: userInput }), // Send user input to frontend
+          new AIMessage({ content: "Great! Please enter your promo code:" })
+        ],
+        userInput: "",
+      };
+    }
+    
+    if (lower === "no" || lower === "n" || lower === "skip") {
+      console.log("   ⏭️  User doesn't want to use a promo code");
+      await saveProgress(config, "applyPromotionCode", { promoSkipped: true }, state);
+
+      return {
+        bookingProgress: {
+          ...state.bookingProgress,
+          completedSteps: [...(state.bookingProgress?.completedSteps || []), "applyPromotionCode"],
+          promoSkipped: true,
+          promoCodeState: undefined,
+        },
+        messages: [
+          new HumanMessage({ content: userInput }), // Send user input to frontend
+          new AIMessage({
+            content: "No promo code applied.\n\nNow I need some information to complete your booking. \n\nPlease Enter your First Name ,Last Name, Email and Phone"
+          })
+        ],
+        userInput: "",
+      };
+    }
+    
+    // If user entered something else (maybe a promo code directly), treat it as a code
+    console.log("   🎟️  User entered something other than yes/no - treating as promo code");
+    // Fall through to code application below
+  }
+  
+  // ============================================================
+  // SCENARIO 2: User said they want to retry after invalid code
+  // ============================================================
+  if (isRetryingCode) {
+    if (lower === "yes" || lower === "y") {
+      console.log("   🔄 User wants to try another code - asking for it...");
+      
+      return {
+        bookingProgress: {
+          ...state.bookingProgress,
+          promoCodeState: "asking_for_code",
+        },
+        messages: [
+          new HumanMessage({ content: userInput }), // Send user input to frontend
+          new AIMessage({ content: "Please enter your promo code:" })
+        ],
+        userInput: "",
+      };
+    }
+    
+    if (lower === "no" || lower === "n") {
+      console.log("   ⏭️  User doesn't want to retry - continuing without promo");
+      await saveProgress(config, "applyPromotionCode", { promoSkipped: true }, state);
+
+      return {
+        bookingProgress: {
+          ...state.bookingProgress,
+          completedSteps: [...(state.bookingProgress?.completedSteps || []), "applyPromotionCode"],
+          promoSkipped: true,
+          promoCodeState: undefined,
+        },
+        messages: [
+          new HumanMessage({ content: userInput }), // Send user input to frontend
+          new AIMessage({
+            content: "No promo code applied.\n\nNow I need some information to complete your booking. \n\nPlease Enter your First Name ,Last Name, Email and Phone"
+          })
+        ],
+        userInput: "",
+      };
+    }
+  }
+
+  // ============================================================
+  // SCENARIO 3: Apply the promo code the user entered
+  // ============================================================
+  const promoCode = userInput;
+  const cartId = state.bookingProgress?.cartId;
+
+  if (!cartId) {
+    console.error("   ❌ No cartId available for promo application");
+    await saveProgress(config, "applyPromotionCode", { promoSkipped: true }, state);
+    
+    return {
+      bookingProgress: {
+        ...state.bookingProgress,
+        completedSteps: [...(state.bookingProgress?.completedSteps || []), "applyPromotionCode"],
+        promoSkipped: true,
+        promoCodeState: undefined,
+      },
+      messages: [
+        new HumanMessage({ content: userInput }), // Send user input to frontend
+        new AIMessage({
+          content: "Couldn't apply the promo code (cart not found). Moving on.\n\nNow I need some information to complete your booking. \n\nPlease Enter your First Name ,Last Name, Email and Phone"
+        })
+      ],
+      userInput: "",
+    };
+  }
+
+  try {
+    console.log(`   🎟️  Applying promo code "${promoCode}" to cart ${cartId}...`);
+    const { applied, total, discountAmount } = await blvdApplyPromoCode(cartId, promoCode);
+
+    console.log("   Boulevard response — applied:", applied, "| total:", total, "| discountAmount:", discountAmount);
+
+    if (applied) {
+      console.log("   ✅ Promo code applied successfully!");
+      await saveProgress(config, "applyPromotionCode", { 
+        promoCode, 
+        promoSkipped: false, 
+        promoTotal: total, 
+        promoDiscountAmount: discountAmount 
+      }, state);
+
+      return {
+        bookingProgress: {
+          ...state.bookingProgress,
+          completedSteps: [...(state.bookingProgress?.completedSteps || []), "applyPromotionCode"],
+          promoCode,
+          promoSkipped: false,
+          promoTotal: total,
+          promoDiscountAmount: discountAmount,
+          promoCodeState: undefined,
+        },
+        messages: [
+          new HumanMessage({ content: userInput }), // Send user input to frontend
+          new AIMessage({
+            content: `✅ Promo code "${promoCode}" applied successfully!\n\nNow I need some information to complete your booking. \n\nPlease Enter your First Name ,Last Name, Email and Phone`
+          })
+        ],
+        userInput: "",
+      };
+    } else {
+      console.log("   ❌ Promo code was not applied (invalid or expired)");
+      
+      return {
+        bookingProgress: {
+          ...state.bookingProgress,
+          promoCodeState: "retrying_code",
+        },
+        messages: [
+          new HumanMessage({ content: userInput }), // Send user input to frontend
+          new AIMessage({
+            content: `❌ The promo code "${promoCode}" is invalid or expired.\n\nWould you like to try another promo code? (yes/no)`
+          })
+        ],
+        userInput: "",
+      };
+    }
+  } catch (error) {
+    console.error("   ❌ Error applying promo code:", error);
+    
+    return {
+      bookingProgress: {
+        ...state.bookingProgress,
+        promoCodeState: "retrying_code",
+      },
+      messages: [
+        new HumanMessage({ content: userInput }), // Send user input to frontend
+        new AIMessage({
+          content: `❌ There was an issue applying the promo code "${promoCode}".\n\nWould you like to try another promo code? (yes/no)`
+        })
+      ],
+      userInput: "",
+    };
+  }
 }
-
 
 async function promptForClientInfo(
   state: typeof StateAnnotation.State,
@@ -1178,11 +1396,17 @@ async function promptForClientInfo(
     | null;
   console.log("   ▶️  Resumed with:", response);
 
+  const userInput = getInterruptText(response);
+
   return {
-    messages: [new AIMessage({ content: message })],
-    userInput: getInterruptText(response),
+    messages: [
+      new AIMessage({ content: message }),
+      new HumanMessage({ content: userInput }), // Send user input to frontend
+    ],
+    userInput: userInput,
   };
 }
+
 
 // async function collectClientInfo(
 //   state: typeof StateAnnotation.State,
@@ -1412,19 +1636,39 @@ async function collectClientInfo(
     
     // ⭐ GENERATE PAYMENT URL HERE (Don't call setClientOnCart)
     const selectedPlanName = state.bookingProgress?.selectedPlanName || "Membership";
-    const selectedPlanPrice = state.bookingProgress?.selectedPlanPrice || "1000"; // Default to $10
-    
-    // Parse price (it's already in cents from Boulevard)
-    const cleanPrice = selectedPlanPrice.toString().replace(/[^0-9]/g, '');
-    const amountInDollars = (parseInt(cleanPrice) / 100).toFixed(2);
+
+    // If a promo was applied, Boulevard already returned the post-discount total — use that.
+    // Otherwise use the original plan price.
+    const promoTotal            = state.bookingProgress?.promoTotal;            // post-discount (cents)
+    const promoDiscountAmount   = state.bookingProgress?.promoDiscountAmount;   // discount  (cents)
+    const selectedPlanPrice     = state.bookingProgress?.selectedPlanPrice || "0";
+
+    const effectivePriceCents = promoTotal != null
+      ? parseInt(promoTotal.toString().replace(/[^0-9]/g, ''), 10)
+      : parseInt(selectedPlanPrice.toString().replace(/[^0-9]/g, ''), 10);
+
+    const amountInDollars = (effectivePriceCents / 100).toFixed(2);
+
+    // Build a discount line for the summary (only when promo was applied)
+    const discountLine = promoDiscountAmount != null
+      ? `\n- Discount: -$${(parseInt(promoDiscountAmount.toString().replace(/[^0-9]/g, ''), 10) / 100).toFixed(2)} (${state.bookingProgress?.promoCode})`
+      : '';
+
+    console.log("💰 [collectClientInfo] selectedPlanPrice (raw):", selectedPlanPrice);
+    console.log("💰 [collectClientInfo] promoTotal (raw):", promoTotal);
+    console.log("💰 [collectClientInfo] Effective amount in dollars:", amountInDollars);
     
     // Get userId and threadId from config for token callback
     const configurable = ensureConfiguration(config);
     const userId = configurable.userId;
     const threadId = config.configurable?.thread_id || 'default';
     
+    console.log("whythread",threadId);
+      
+
     // Build payment URL with userId and threadId for token callback
-    const paymentUrl = `http://localhost:4200/checkout/?email=${encodeURIComponent(newInfo.email!)}&amount=${cleanPrice}&userId=${encodeURIComponent(userId)}&threadId=${encodeURIComponent(threadId)}`;
+     //const paymentUrl = `https://blvd-chatbot.ostlive.com/checkout/?email=${encodeURIComponent(newInfo.email!)}&amount=${amountInDollars}&userId=${encodeURIComponent(userId)}&threadId=${encodeURIComponent(threadId)}`;
+     const paymentUrl = `http://localhost:4200/checkout/?email=${encodeURIComponent(newInfo.email!)}&amount=${amountInDollars}&userId=${encodeURIComponent(userId)}&threadId=${encodeURIComponent(threadId)}`;
     
     console.log("💳 [collectClientInfo] Generated payment URL:", paymentUrl);
     console.log("💰 [collectClientInfo] Amount: $" + amountInDollars);
@@ -1443,21 +1687,20 @@ async function collectClientInfo(
         paymentUrl: paymentUrl, // ⭐ Save to state
       },
       messages: [new AIMessage({ 
-        content: `✅ Booking Complete! 🎉
+        content: `
 
 📋 Summary:
 - Location: ${state.bookingProgress?.selectedLocationName}
 - Plan: ${selectedPlanName}
 - Name: ${newInfo.firstName} ${newInfo.lastName}
 - Email: ${newInfo.email}
-- Phone: ${newInfo.phoneNumber}${state.bookingProgress?.promoCode ? `\n- Promo: ${state.bookingProgress.promoCode}` : ''}
+- Phone: ${newInfo.phoneNumber}${state.bookingProgress?.promoCode ? `\n- Promo: ${state.bookingProgress.promoCode}` : ''}${discountLine}
 - Amount: $${amountInDollars}
 
 💳 Click below to complete your payment:
 ${paymentUrl}
 
-After payment, your booking will be automatically processed.
-Thank you for booking with us!` 
+After payment, your membership will be automatically processed.` 
       })],
       userInput: "",
     };
@@ -1494,9 +1737,15 @@ async function setClientOnCart(
     await saveProgress(config, "setClientOnCart", {}, state);
 
     // Clear for next booking
+    // ⭐ FIX: Include threadId in namespace for thread isolation
     const store = getStoreFromConfigOrThrow(config);
     const configurable = ensureConfiguration(config);
-    await store.delete(getBookingNamespace(config), "progress");
+    const threadId = config.configurable?.thread_id || 'default';
+    console.log("thrrrr",threadId);
+    
+    await store.delete(["booking", configurable.userId, threadId], "progress");
+
+    console.log("thrrrr2",threadId);
 
     return {
       bookingProgress: {
@@ -1574,7 +1823,7 @@ async function checkoutCart(
     // Clear for next booking
     const store = getStoreFromConfigOrThrow(config);
     const configurable = ensureConfiguration(config);
-    await store.delete(getBookingNamespace(config), "progress");
+    await store.delete(["booking", configurable.userId], "progress");
 
     return {
       bookingProgress: {
@@ -1594,12 +1843,10 @@ async function checkoutCart(
     };
   }
 }
-
 // ============================================================================
 // ROUTING
 // ============================================================================
-
-function routeAfterLoad(state: typeof StateAnnotation.State): string {
+async function routeAfterLoad(state: typeof StateAnnotation.State): string {
   // console.log("\n🔀 [routeAfterLoad] Routing...");
   
   const completed = state.bookingProgress?.completedSteps || [];
@@ -1607,10 +1854,58 @@ function routeAfterLoad(state: typeof StateAnnotation.State): string {
   // console.log("   Completed:", completed);
   console.log("   User input:", userInput ? `"${userInput}"` : "(empty)");
 
-  // ⭐ NEW: Check if this is an internal booking status check
-  if (userInput === "check_booking_status_internal") {
-    console.log("   → checkBookingStatus (internal status check)");
-    return "checkBookingStatus";
+  // ⭐ NEW: If bookingProgress is undefined or empty, start fresh
+  if (!state.bookingProgress || completed.length === 0) {
+    console.log("   → getLocations (fresh start - no progress found)");
+    return "getLocations";
+  }
+
+  // // ⭐ NEW: Check if this is an internal booking status check
+  // if (userInput === "check_booking_status_internal") {
+  //   console.log("   → checkBookingStatus (internal status check)");
+  //   return "checkBookingStatus";
+  // }
+
+    // ⭐ NEW: Check if this is an internal booking status check
+  // Check the last message content (could be AIMessage or HumanMessage)
+  // const lastMessage = state.messages[state.messages.length - 1];
+  // const lastMessageContent = lastMessage?.content?.toString().trim() || "";
+  
+  // if (lastMessageContent === "check_booking_status_internal") {
+  //   console.log("   → checkBookingStatus (internal status check)");
+  //   return "checkBookingStatus";
+  // }
+
+
+  const store = getStoreFromConfigOrThrow(config);
+  const configurable = ensureConfiguration(config);
+  const threadId = config.configurable?.thread_id || 'default';
+  
+  console.log("🔍 [routerAfterReload] Checking booking status from store...");
+  
+  try {
+    const results = await store.search(["booking", configurable.userId, threadId], { limit: 1 });
+    
+    console.log("   - Search results length:", results?.length || 0);
+    
+    if (results && results.length > 0) {
+      const progress = results[0].value;
+      
+      console.log("     • completedSteps:", progress.completedSteps);
+      console.log("     • checkoutComplete:", progress.data?.checkoutComplete);
+      
+      // Check if checkout is complete
+      if (progress.data?.checkoutComplete === true) {
+        console.log("   ✅ Checkout is complete, sending success message");
+        return "checkBookingStatus";
+      } else {
+        console.log("     • checkoutComplete value:", progress.data?.checkoutComplete);
+      }
+    } else {
+      console.log("   ⚠️ No progress data found in store");
+    }
+  } catch (error) {
+    console.error("   ❌ Error checking booking status from store:");
   }
 
   // New payment flow
@@ -1759,33 +2054,52 @@ async function checkBookingStatus(
       // Check if booking is completed
       const isComplete = bookingData.data?.checkoutComplete === true;
       
+      console.log("isComplete",isComplete);
+      
+
       if (isComplete) {
+
+      console.log("entered222");
+
         // Extract booking details for summary
         const locationName = bookingData.data?.selectedLocationName || "N/A";
         const planName = bookingData.data?.selectedPlanName || "N/A";
-        const planPrice = bookingData.data?.selectedPlanPrice || "N/A";
-        const clientInfo = bookingData.data?.clientInfo || {};
+        const planPrice = (bookingData.data?.selectedPlanPrice ?? 0) / 100;
+        const promoTotal =
+          bookingData.data?.promoTotal != null
+            ? bookingData.data.promoTotal / 100
+            : planPrice;
+         const clientInfo = bookingData.data?.clientInfo || {};
         const firstName = clientInfo.firstName || "N/A";
         const lastName = clientInfo.lastName || "N/A";
         const email = clientInfo.email || "N/A";
         const phoneNumber = clientInfo.phoneNumber || "N/A";
+     
+        const hasDiscount = planPrice !== promoTotal;
+        const savings = hasDiscount ? Math.round(planPrice - promoTotal) : 0;
+        
 
-        // Create completion message with summary
-        const completionMessage = `**Booking Completed Successfully!**
 
-        Your membership booking has been confirmed. Here's a summary of your booking:
-
-        **Location:** ${locationName}
-
-        **Membership Plan:** ${planName}
-        **Price:** ${planPrice}
-
-        **Client Information:**
+        const completionMessage = `[RECEIPT]
+        ✅ Membership Purchased - Receipt
+        
+        📍 Location: ${locationName}
+        
+        💎 Membership Plan: ${planName}
+        
+        💰 Pricing Details:
+      - Original Price: $${planPrice}
+        ${hasDiscount ? `- After : $${promoTotal}` : ""}
+        ${hasDiscount ? `- You Saved: $${savings}` : ""}
+        
+        👤 Client Information:
         - Name: ${firstName} ${lastName}
         - Email: ${email}
         - Phone: ${phoneNumber}
-
-        Thank you for your booking! You should receive a confirmation email shortly at ${email}.`;
+        
+        📧 A confirmation email has been sent to ${email}
+        
+        Thank you ! 🎉`;
 
         console.log("[checkBookingStatus] Booking complete, sending summary");
 
@@ -1805,11 +2119,43 @@ async function checkBookingStatus(
   return state;
 }
 
+
+
+// Node to cleanup state after successful booking
+async function cleanupState(state: typeof StateAnnotation.State): Promise<Partial<typeof StateAnnotation.State>> {
+  const userId = ensureConfiguration(config).userId;
+  
+  console.log('🧹 [cleanupState] Cleaning up booking state for user:', userId);
+  
+  if (!userId) {
+    return state;
+  }
+
+  try {
+    // Delete the booking progress from the store
+    // ⭐ FIX: Include threadId in namespace for thread isolation
+    const threadId = config.configurable?.thread_id || 'default';
+    await config.store.delete(["booking", userId, threadId], "progress");
+    console.log('✅ [cleanupState] Booking state cleared successfully');
+    
+    // Also save the updated store to file
+    await saveStoreToFile();
+    console.log('✅ [cleanupState] Store saved to file');
+    
+    // Return state with cleared bookingProgress
+    return {
+      bookingProgress: undefined
+    };
+  } catch (error) {
+    console.error('[cleanupState] Error cleaning up state:', error);
+  }
+  
+  return state;
+}
+
 // ============================================================================
 // GRAPH CONSTRUCTION
 // ============================================================================
-
-console.log("\n🗺️  [Setup] Building graph...");
 
 const workflow = new StateGraph(
   { stateSchema: StateAnnotation },
@@ -1829,6 +2175,7 @@ const workflow = new StateGraph(
   .addNode("addCardPaymentMethod", addCardPaymentMethod)
   .addNode("checkoutCart", checkoutCart)
   .addNode("checkBookingStatus", checkBookingStatus)
+  .addNode("cleanupState", cleanupState)
   .addEdge(START, "loadProgress")
   .addConditionalEdges("loadProgress", routeAfterLoad, {
     getLocations: "getLocations",
@@ -1844,6 +2191,7 @@ const workflow = new StateGraph(
     addCardPaymentMethod: "addCardPaymentMethod",
     checkoutCart: "checkoutCart",
     checkBookingStatus: "checkBookingStatus",
+    cleanupState: "cleanupState",
     __end__: END,
   })
   .addEdge("getLocations", "selectLocation")
@@ -1872,7 +2220,30 @@ const workflow = new StateGraph(
     addMembershipToCart: "addMembershipToCart",
   })
   .addEdge("addMembershipToCart", "applyPromotionCode")
-  .addEdge("applyPromotionCode", "promptForClientInfo")
+  .addConditionalEdges("applyPromotionCode", (state: typeof StateAnnotation.State) => {
+    // Check if promo code step is complete
+    const completed = state.bookingProgress?.completedSteps || [];
+    const promoCodeState = state.bookingProgress?.promoCodeState;
+    
+    // If we're still in the promo flow (asking for code or retrying), loop back
+    if (promoCodeState === "asking_for_code" || promoCodeState === "retrying_code") {
+      console.log("🔄 [Router] Promo flow incomplete - looping back to applyPromotionCode");
+      return "applyPromotionCode";
+    }
+    
+    // If promo step is completed, move to client info
+    if (completed.includes("applyPromotionCode")) {
+      console.log("✅ [Router] Promo flow complete - moving to promptForClientInfo");
+      return "promptForClientInfo";
+    }
+    
+    // Default: loop back to complete the promo flow
+    console.log("⚠️ [Router] Promo step not in completedSteps - looping back");
+    return "applyPromotionCode";
+  }, {
+    applyPromotionCode: "applyPromotionCode",
+    promptForClientInfo: "promptForClientInfo",
+  })
   .addEdge("promptForClientInfo", "collectClientInfo")
   // .addConditionalEdges("collectClientInfo", (state: typeof StateAnnotation.State) => {
   //   // Check if all required client info is collected
@@ -1901,14 +2272,29 @@ const workflow = new StateGraph(
     __end__: END,
   })
   .addEdge("setClientOnCart", END)
-  .addEdge("addCardPaymentMethod", "checkoutCart")
-  .addEdge("checkoutCart", "checkBookingStatus")
+  // .addEdge("addCardPaymentMethod", "checkoutCart")
+  // .addEdge("checkoutCart", "checkBookingStatus")
   .addEdge("checkBookingStatus", END);
 
-export const graph = workflow.compile({
-  checkpointer,
+// ✅ Graph is compiled WITHOUT checkpointer here
+// Checkpointer is passed at runtime in index.ts
+
+
+
+const config: any = {
+  configurable: {
+    checkpointer:checkpointer,
+    // thread_id: userId,
+    // userId: userId,
+    model: "claude-sonnet-4-5-20250929",
+  },
   store: memorySTore,
-});
+};
+
+
+
+
+export const graph = workflow.compile(config);
 graph.name = "MembershipBookingAgent";
 
 console.log("[Setup] Graph ready with interrupt pattern!");
@@ -1993,9 +2379,16 @@ app.post('/receive-token', async (req: Request, res: Response) => {
     const { token, uuid, sessionId } = req.body;
     
     console.log("🔍 [receive-token] Extracted values:");
-    console.log("   - token:", token);
     console.log("   - userId:", uuid);
     console.log("   - threadId:", sessionId);
+
+    config.configurable.thread_id = sessionId;
+
+    const threadId = config.configurable?.thread_id || 'default';
+    
+    console.log('     • thread_id5555:', threadId);
+    
+
     
     if (!token) {
       console.error("[receive-token] Missing token in request body");
@@ -2022,8 +2415,6 @@ app.post('/receive-token', async (req: Request, res: Response) => {
     tokenStore.set(storeKey, token);
     console.log(`[receive-token] Token stored successfully!`);
     console.log(`   - Store key: ${storeKey}`);
-    console.log(`   - Token: ${token}`);
-    console.log(`   - Current tokenStore size: ${tokenStore.size}`);
     
     // ⭐ NEW: Automatically process payment after receiving token
     console.log("\n[receive-token] Starting automatic payment processing...");
@@ -2043,12 +2434,10 @@ app.post('/receive-token', async (req: Request, res: Response) => {
       const store = memorySTore;
       
       console.log("[receive-token] Searching for booking progress...");
-      console.log("   - Namespace: ['booking', '" + uuid + "', '" + sessionId + "']");
       
       const results = await store.search(["booking", uuid, sessionId], { limit: 1 });
       
       console.log("[receive-token] Search results:");
-      console.log("   - results length:", results?.length);
       // console.log("   - results:", JSON.stringify(results, null, 2));
       
       if (!results || results.length === 0) {
@@ -2070,6 +2459,16 @@ app.post('/receive-token', async (req: Request, res: Response) => {
       if (!clientInfo?.firstName || !clientInfo?.lastName || !clientInfo?.email || !clientInfo?.phoneNumber) {
         throw new Error("Incomplete client information");
       }
+      
+
+
+      const configurable = ensureConfiguration(config);
+      const userId = configurable.userId;
+      const threadId = config.configurable?.thread_id || 'default';
+      
+      console.log('     • thread_i6666:', threadId);
+    
+
       
       // Step 1: Set client info on cart
       console.log("\n[receive-token] Step 1: Setting client info on cart...");
@@ -2118,20 +2517,31 @@ app.post('/receive-token', async (req: Request, res: Response) => {
       });
 
 
-      // Automatically trigger the graph to send the success message
+// Automatically trigger the graph to send the success message
 try {
+
+  console.log('🔍 [receive-token] About to invoke graph...');
+  console.log('   - sessionId from request:', sessionId);
+  console.log('     • thread_id:', sessionId);
+  console.log('     • userId:', uuid);
+
+  const configurable = ensureConfiguration(config);
+    const userId = configurable.userId;
+    const threadId = config.configurable?.thread_id || 'default';
+    
+    console.log('     • thread_id333:', threadId);
+  
+
   const graphResponse = await graph.invoke(
     {
-      messages: [
-        new HumanMessage({ content: "check_booking_status_internal" })
-      ]
+      messages: [],  // ✅ Empty messages array instead of null
     },
     {
       configurable: {
         thread_id: sessionId,
         userId: uuid,
         model: "claude-sonnet-4-5-20250929",
-        systemPrompt: SYSTEM_PROMPT,  // ✅ ADD THIS
+        systemPrompt: SYSTEM_PROMPT,
       },
       store: memorySTore,
     }
@@ -2141,7 +2551,6 @@ try {
 } catch (error) {
   console.error('[receive-token] Error invoking graph:', error);
 }
-
 
 
       
@@ -2219,7 +2628,7 @@ export async function getStoredToken(userId: string, threadId: string): Promise<
 }
 
 // Start the Express server
-const PORT =  3000;
+const PORT =  3030;
 app.listen(PORT, () => {
   console.log(`[Token Server] Listening on port ${PORT}`);
   console.log(`   POST /receive-token - Receive card token`);

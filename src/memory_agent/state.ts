@@ -47,8 +47,12 @@ export const StateAnnotation = Annotation.Root({
     selectedPlanName?: string;
     selectedPlanPrice?: string; // ⭐ NEW: Store plan price
     promoCode?: string;
+    promoTotal?:string;
+    promoDiscountAmount?:string;
+    promoCodeState?:string;
     promoSkipped?: boolean;
     paymentUrl?: string; // ⭐ NEW: Store generated payment URL
+    checkoutComplete?: boolean;
     clientInfo?: {
       firstName?: string;
       lastName?: string;
